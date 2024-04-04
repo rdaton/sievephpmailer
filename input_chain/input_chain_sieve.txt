@@ -1,0 +1,50 @@
+/*
+SieveFilter is in charge of input chain 
+Only one real account, which is mailer@ss.es
+several aliases such as  list1@ss.es, list1@ss.es etc,
+Each alias has its own mail IMAP folder and also a FIFO queue which is consumed by the output chain.
+Catch-all IMAP folder is LostMail
+*/
+
+
+require ["fileinto","variables","regex"];
+
+#Constants and variables  (begin)
+/* https://tools.ietf.org/html/rfc5229 .. (BUG) when using REGEX, variables are not evaluated...
+*/
+
+#found a match or not
+set "ihasMatch" "false" ; 
+
+#Constants and variables  (end)
+
+#mail-list list1
+if allof (header :regex ["to", "cc"] "(list1@ss.es)", address :matches ["From"]
+[
+"mail1@ss.es",
+"mail2@ss.es",
+])
+{
+	set "ihasMatch" "true";
+    fileinto  "list1";
+    fileinto  "list1_fifo";
+}
+
+#mail-list list2
+if allof (header :regex ["to", "cc"] "(list2@ss.es)", address :matches ["From"]
+[
+"mail3@ss.es",
+"mail4@ss.es",
+])
+{
+	set "ihasMatch" "true";
+    fileinto  "list2";
+    fileinto  "list2_fifo";
+}
+
+
+#Catch-all IMAP folder is LostMail
+if  allof (string :matches "${ihasMatch}" "false")
+{
+    fileinto  "LostMail";
+}

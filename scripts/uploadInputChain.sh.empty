@@ -1,0 +1,4 @@
+#!/bin/bash
+cat uploadInputChain | sieveshell  --authname user@domain.com  mail.domain.com --port 4190 --passwd plain_password_is_bad_idea_update_to_env
+
+##https://souptonuts.sourceforge.net/how_to_linux_and_open_source.htm

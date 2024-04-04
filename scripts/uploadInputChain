@@ -1,0 +1,6 @@
+deactivate
+delete input_chain_sieve.txt
+put ../input_chain/input_chain_sieve.txt
+activate input_chain_sieve.txt
+list
+
