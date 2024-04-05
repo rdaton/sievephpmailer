@@ -22,7 +22,7 @@ set "ihasMatch" "false" ;
 if allof (header :regex ["to", "cc"] "(list1@ss.es)", address :matches ["From"]
 [
 "mail1@ss.es",
-"mail2@ss.es",
+"mail2@ss.es"
 ])
 {
 	set "ihasMatch" "true";
@@ -34,7 +34,7 @@ if allof (header :regex ["to", "cc"] "(list1@ss.es)", address :matches ["From"]
 if allof (header :regex ["to", "cc"] "(list2@ss.es)", address :matches ["From"]
 [
 "mail3@ss.es",
-"mail4@ss.es",
+"mail4@ss.es"
 ])
 {
 	set "ihasMatch" "true";
