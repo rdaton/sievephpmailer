@@ -188,7 +188,7 @@ echo $this->structure->type.PHP_EOL;
                     //if body is base64, decode source: https://stackoverflow.com/posts/475217/revisions
                     //unsafe code: does not check length TODO
                     //base64 bug
-                    if (preg_match("/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/", $this->cuerpo)) {
+                    if ( ($this->structure->encoding == constant("ENCBASE64")) ||(preg_match("/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/", $this->cuerpo))) {
                        $this->cuerpo = base64_decode($this->cuerpo);
                     }
 					$this->cuerpoHtml = $this->cuerpo;
@@ -229,9 +229,10 @@ echo $this->structure->type.PHP_EOL;
                     //if body is base64, decode source: https://stackoverflow.com/posts/475217/revisions
                     //unsafe code: does not check length TODO
                     //base64 bug
-                    if (preg_match("/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/", $this->cuerpo)) {
-                       $this->cuerpo = base64_decode($this->cuerpo);
+                    if ( ($this->structure->encoding == constant("ENCBASE64")) ||(preg_match("/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/", $this->cuerpo))) {
+                        $this->cuerpo = base64_decode($this->cuerpo);
                     }
+                    
 					$this->cuerpoHtml = $this->cuerpo;
 				}
 				else //attach as ICS and mark message as vcalendar 	and marking message as vcalendar https://github.com/PHPMailer/PHPMailer/issues/175#issuecomment-636504190	
