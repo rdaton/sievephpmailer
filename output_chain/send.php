@@ -17,34 +17,19 @@ date_default_timezone_set('Etc/UTC');
 //¡WARNING! UNSAFE STRING PARSE. CORRECT IF EVER THIS CODE GETS TO PRODUCTION
 $arg1= $argv[1];
 
-//variables importadas (servidores, direcciones, credenciales, etc)
+//IMPORTED VARS (servers, email addresses, credentials, etc)
 include("config/".$arg1.".conf");
 
-//CONSTANTES
-/*define ("TYPETEXT", 0);
-define ("TYPEMULTIPART", 1);
-define ("TYPEMESSAGE", 2);
-define ("TYPEAPPLICATION", 3);
-define ("TYPEAUDIO", 4);
-define ("TYPEIMAGE", 5);
-define ("TYPEVIDEO", 6);
-define ("TYPEMODEL", 7);
-define ("TYPEOTHER", 8);
+//CONSTANTS
+$regex = "/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/";
 
-define ("ENC7BIT", 0);
-define ("ENC8BIT", 1);
-define ("ENCBINARY", 2);
-define ("ENCBASE64", 3);
-define ("ENCQUOTEDPRINTABLE", 4);
-define ("ENCOTHER", 5);
-*/
 //MAIN GLOBAL VARIABLES
 $acum = 0;
 $acum_error = 0;
-$regex = "/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/";
 
-//funciones estáticas y clases
+//STATIC FUNCTIONS AND METHODS
 //https://electrictoolbox.com/php-imap-message-body-attachments/
+//returns an Array containing all parts from email's Multipart (basically a Danish Cookie Box, IMHO)
 function flattenParts($messageParts, $flattenedParts = array(), $prefix = '', $index = 1, $fullPrefix = 1) {
   foreach($messageParts as $part) {
     $flattenedParts[$prefix.$index] = $part;
@@ -63,6 +48,7 @@ function flattenParts($messageParts, $flattenedParts = array(), $prefix = '', $i
   return $flattenedParts;
 }
 
+//return a particular part of the email , and in some cases, decode it
 //https://electrictoolbox.com/php-imap-message-body-attachments/
 function getPart($connection, $messageNumber, $partNumber, $encoding) {
   $data = imap_fetchbody($connection, $messageNumber, $partNumber);
@@ -76,6 +62,7 @@ function getPart($connection, $messageNumber, $partNumber, $encoding) {
   }
 }
 
+//used when 'part' is a file which shall be attached
 //https://electrictoolbox.com/php-imap-message-body-attachments/
 function getFilenameFromPart($part) {
   $filename = '';
@@ -94,16 +81,85 @@ function getFilenameFromPart($part) {
       }
     }
   }
-  //debug
-  //echo "sacando adjunto".PHP_EOL;
-  //echo $filename.PHP_EOL;
   return $filename;
 }
 
+
+//CLASSESS 
+
+//mailBuilder class, it takes what mailExtractor provided and  through PHPMailer (thanks), build a minimialistic (hopefully) email
+class mailBuilder {
+  //mailBuilder private attributes
+  private $mail;
+  private $cuerpo;
+  
+  //mailBuilder builder
+  function __construct($cuerpo,$cuerpo_plano,$asunto,$senderaddress,$adjuntos,$ical_content,$esTextoPlano,$esCalendar) {
+      //Create a new PHPMailer instance
+      $this->mail = new PHPMailer();
+      $this->mail->Encoding = 'base64';
+      //echo 'asunto '.$asunto; //debug
+      $this->mail->Subject = $asunto;
+      $this->cuerpo = $cuerpo . "Sent from: " . $senderaddress;
+      //if NOT plain text, convert to HTML, else use plain text ($this->cuerpo)as it is 
+      if ($esTextoPlano) {
+        $this->mail->Body = $this->cuerpo;
+      } else {
+        // assumes that $cuerpo is quoted_printable 
+        $this->mail->msgHTML(imap_qprint($this->cuerpo));
+      }
+
+      //if a calendar invite, crete a calendar object (hopefully it was correctly parsed)
+      //https://github.com/PHPMailer/PHPMailer/issues/175#issuecomment-636504190
+      if ($esCalendar) {
+        $this->mail->AltBody = $ical_content;
+        $this->mail->Ical = $ical_content;
+        // https://github.com/PHPMailer/PHPMailer/issues/175
+        //$mail->ContentType = 'text/calendar'; //This seems to be important for Outlook
+        $this->mail->addStringAttachment($ical_content, 'ical.ics', 'base64', 'text/calendar'); //This seems to be important for Gmail
+      }
+
+      foreach ($adjuntos as $key => $value) {
+        $this->mail->AddStringAttachment($value, $key, 'base64', 'application/octet-stream');
+        }
+  } //END OF mailBuilder builder
+    
+  //mailBuilder getters
+    //none
+    
+  //mailbuilder methods and functions
+  
+  //passing a password through a  paremeter is a very bad practice
+  //TODO: insecure, ¡fix for  production!
+  //returns boolean
+  public function send($direcciones,$unHost,$puerto,$username,$password,$autor)
+  {
+    $this->mail->isSMTP();
+    //used to debug SMTP issues; uncomment for more verbosity
+    //$mail->SMTPDebug = SMTP::DEBUG_SERVER; 
+    //Set who the message is to be sent to
+    foreach ($direcciones as $value) { 
+    $this->mail->AddBCC($value);
+    }    
+    $this->mail->Host = $unHost; 
+    $this->mail->Port = $puerto; 
+    $this->mail->SMTPAuth = 1;
+    $this->mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    $this->mail->Username = $username; 
+    $this->mail->Password = $password; 
+    $this->mail->setFrom($autor); 
+    $this->mail->addReplyTo($autor);
+    
+    return $this->mail->send();
+  }
+}
+
+//mailExtractor class, it extracts everything so later it can be reassambled and DKIM signed in another class
 //https://electrictoolbox.com/php-imap-message-body-attachments/
 //https://www.techfry.com/php-tutorial/how-to-read-emails-using-php
 //https://github.com/PHPMailer/PHPMailer/issues/175#issuecomment-636504190
 class mailExtractor {
+  //mailExtractor private attributes
   private $structure;
   private $cuerpo;
   private $cuerpoHtml;
@@ -112,22 +168,7 @@ class mailExtractor {
   private $esTextoPlano;
   private $esCalendar;
 
-  private function insertaArrayAttachments($connection, $messageNumber, $partNumber, $part) {
-    $filename = getFilenameFromPart($part);
-    //https://www.thewebtaylor.com/articles/php-how-to-strip-all-spaces-and-special-characters-from-string
-    //escape string of filename (delete all spaces,etc).
-    $filename=preg_replace('/[^a-zA-Z0-9-_\.]/','', $filename);
-    //echo $filename.PHP_EOL; //debug
-    if($filename) {
-      // it's an attachment
-      //echo "it's an attachment ";
-      // now do something with the attachment, e.g. save it somewhere
-      $this->attachments[$filename] = getPart($connection, $messageNumber, $partNumber, $part->encoding);
-    } else {
-      // don't know what it is
-    }
-  }
-
+  //mailExtractor getters
   public function getAttachments() {
     return $this->attachments;
   }
@@ -151,25 +192,24 @@ class mailExtractor {
   public function getEsCalendar() {
     return $this->esCalendar;
   }
+  
 
-  //constructora mailExtractor
-  function __construct($connection,$messageNumber) {
-    //get access to global variables  
+  //mailExtractor builder (very very messy and hacky: it is the part which gives me headaches the most)
+  function __construct($connection,$messageNumber){
+    //get access to global variables  (it is a PHP thing) (or a Pascal thing: I do not remember)
     global $regex;
     //end of get access to global variables
     $this->esCalendar = 0;
+    $this->ical_content = NULL;
     $this->esTextoPlano = 0;
     $this->attachments = array();
     $this->structure = imap_fetchstructure($connection,$messageNumber);
     $unasPartes =  $this->structure->parts;
-    if (!(isset($unasPartes))) { //plain text message
-      //echo "mensaje sólo texto".PHP_EOL; //debug
-      //if plain text send, if not I really do not know what it is
+    if (!(isset($unasPartes))) { //it is a plain text message
       echo $this->structure->type.PHP_EOL;
       if ($this->structure->type == constant("TYPETEXT")) {
         //in plaintext email partnumber 0 is header; partnumber 1 is body
         $partNumber = 1;
-        //echo 'some kind of plain text'.PHP_EOL; //debug
         // the HTML or plain text part of the email
         $miBuffer = getPart($connection, $messageNumber, $partNumber, $this->structure->encoding);
         //if vcalendar, not using as text, but attaching as ICS
@@ -193,15 +233,12 @@ class mailExtractor {
           // }
         }
       }
-    } else { //unasPartes no está vacío
-      //echo "mensaje con partes".PHP_EOL; //debug
+    } else { //unasPartes is not empty: it is a multipart email
       $this->esTextoPlano = 0;
       $flattenedParts = flattenParts($this->structure->parts);
-
+      //start extracting useful parts of the multipar
       foreach($flattenedParts as $partNumber => $part) {
         $unTipo = $part->type;
-        //echo $unTipo;
-        //echo PHP_EOL;
 
         switch(1) {
           case $unTipo == constant("TYPETEXT"):
@@ -253,110 +290,101 @@ class mailExtractor {
       }
     }
   }
+  //mailExtractor methods and functions
+  
+  //function insertaArrayAttachments: a single file comes here to be added to the Array of attahcments ($this->attachments)
+  private function insertaArrayAttachments($connection, $messageNumber, $partNumber, $part) {
+    $filename = getFilenameFromPart($part);
+    //https://www.thewebtaylor.com/articles/php-how-to-strip-all-spaces-and-special-characters-from-string
+    //escape string of filename (delete all spaces,etc).
+    $filename=preg_replace('/[^a-zA-Z0-9-_\.]/','', $filename);
+    //echo $filename.PHP_EOL; //debug
+    if($filename) {
+      // it's an attachment
+      //echo "it's an attachment ";
+      // now do something with the attachment, e.g. save it somewhere
+      $this->attachments[$filename] = getPart($connection, $messageNumber, $partNumber, $part->encoding);
+    } else {
+      // if it is not an attachment, I don't know what it is
+    }
+  }
 }//end of class mailExtractor
 
-//BEGIN OF MAIN method
+//BEGIN OF MAIN
 //https://github.com/victorcuervo/lineadecodigo_php/blob/master/email/cuerpo-mensaje.php
-//RECEIVE
-//abrir cola IMAP , conseguir nº de correos, ordenar por fecha (más nuevo primero), y lanzar iteración
-$inbox = imap_open($hostname,$username,$password) or die('Ha fallado la conexión: ' . imap_last_error());
-$num_emails = imap_num_msg ($inbox);
-//BEGIN OF LOOP OF MAILS QUEUE
-for($i=1; $i<=$num_emails; $i++) {
-  // begin calendar set to zero for every loop
 
-  $ical_content= '';
-  // end calendar set to zero for every loop
-  $cuerpo = '';
+//open IMAP queue, get nº of emails, order them by most recent date and start loop
+//I insist, do not open an IMAP permanent folder, but rather an unimportant IMAP folder (I call it fifo) queue
+//where destruction is not an issue (e.g. all emails are copies of the main mailbox)
+
+$inbox = imap_open($hostname,$username,$password) or die('IMAP Connection failed: ' . imap_last_error());
+$num_emails = imap_num_msg ($inbox);
+$acum_error = 0;
+$acum_ok = 0;
+
+//MAIN: MAIN LOOP TO PROCESS EACH EMAIL IN THE EMAIL ($inbox) QUEUE
+for($i=1; $i<=$num_emails; $i++) {
+  //MAIN: MAIN LOOP set some loop variables to zero
+  $esTextoPlano = 0 ;  
+  $esCalendar = 0 ;
+  $headers = NULL;
+  $asunto = '';
+  $senderaddress = '';
   $cuerpo_plano = '';
-  $adjuntos = array();
-  $headers = imap_headerinfo($inbox,$i,1);
-  $asunto = $headers->subject;
-  //Get body and attachment
+  $cuerpo = ''; 
+  $adjuntos = NULL;
+  $ical_content = NULL;
+
+//MAIN: MAIN LOOP: EXTRACT ALL USEFUL FIELDS OF CURRENT EMAIL
+  //create unMailExtractor
   $unMailExtractor = new mailExtractor($inbox,$i);
-  $cuerpo_plano = $unMailExtractor->getCuerpo();
-  $cuerpo = $unMailExtractor->getCuerpoHtml();
-  $adjuntos = $unMailExtractor->getAttachments();
+  
+  //Get headers, subject, senderaddress, body and attachment
   $esTextoPlano = $unMailExtractor->getEsTextoPlano();
   $esCalendar = $unMailExtractor->getEsCalendar();
+  $headers = imap_headerinfo($inbox,$i,1);
+  $asunto = $headers->subject;
+  $senderaddress = $headers->senderaddress;
+  $cuerpo_plano = $unMailExtractor->getCuerpo();
+  $cuerpo = $unMailExtractor->getCuerpoHtml();  
+  $adjuntos = $unMailExtractor->getAttachments(); 
+  $ical_content = $unMailExtractor->getIcalContent();
+  
+  //destroy unMailExtractor
+  unset ($unMailExtractor);
 
-  //https://github.com/PHPMailer/PHPMailer/
-  //SEND
-
-  //Create a new PHPMailer instance
-  $mail = new PHPMailer();
-  //$mail->CharSet = 'UTF-8';
-  //$mail->CharSet = "utf-8";
-  //$mail->Encoding = 'quoted-printable';
-  $mail->Encoding = 'base64';
-  //Tell PHPMailer to use SMTP
-  $mail->isSMTP();
-  //$mail->SMTPDebug = SMTP::DEBUG_SERVER;
-  //Set the hostname of the mail server
-  $mail->Host = $unHost;
-  $mail->Port = $puerto;
-  $mail->SMTPAuth = 1;
-  $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-  $mail->Username = $username;
-  $mail->Password = $password;
-  $mail->setFrom($autor);
-  $mail->addReplyTo($autor);
-  //Set who the message is to be sent to
-  foreach ($direcciones as $value) {
-    $mail->AddBCC($value);
-  }
-  //echo 'asunto '.$asunto; //debug
-  $mail->Subject = $asunto;
-  //$mail->Body = imap_qprint($cuerpo);
-  //$mail->AltBody = imap_qprint($cuerpo_plano);
-  //bugfix: add sender
-  $cuerpo = $cuerpo . "Sent from: " . $headers->senderaddress;
-  //convert to HTML si NO es texto plano, sino asignar directamente a body
-  if ($esTextoPlano) {
-    $mail->Body = $cuerpo;
-  } else {
-    // asume que $cuerpo es quoted_printable
-    $mail->msgHTML(imap_qprint($cuerpo));
-  }
-
-  //if a calendar invite, crete a calendar object (hopefully it was correctly parsed)
-  //https://github.com/PHPMailer/PHPMailer/issues/175#issuecomment-636504190
-  if ($esCalendar) {
-    $ical_content = $unMailExtractor->getIcalContent();
-    $mail->AltBody = $ical_content;
-    $mail->Ical = $ical_content;
-    // https://github.com/PHPMailer/PHPMailer/issues/175
-    //$mail->ContentType = 'text/calendar'; //This seems to be important for Outlook
-    $mail->addStringAttachment($ical_content, 'ical.ics', 'base64', 'text/calendar'); //This seems to be important for Gmail
-  }
-
-  foreach ($adjuntos as $key => $value) {
-    //echo $key.PHP_EOL; //debug
-    //echo $value.PHP_EOL; //debug
-    $mail->AddStringAttachment($value, $key, 'base64', 'application/octet-stream');
-    //$mail->AddStringAttachment($string,$filename,$encoding,$type);
-    //$mail->AddAttachment($value);
-  }
-
+//MAIN: MAIN LOOP: SEND CURRENT EMAIL
+  //create mailBuilder
+  $unEmail=new mailBuilder($cuerpo,$cuerpo_plano,$asunto,$senderaddress,$adjuntos,$ical_content,$esTextoPlano,$esCalendar);
+  
   //send the message, check for errors
-  if (!$mail->send()) {
+  //all parameters for this call (send) are imported vars
+  if (!$unEmail->send($direcciones,$unHost,$puerto,$username,$password,$autor)) { 
     $acum_error++;
-  } else {
-    //borrar correo
-    imap_delete($inbox,$i);
-    $acum++;
-  }
-} //END LOOP OF MAILS QUEUE
+  } 
+  else {
+        //delete email from IMAP queue; be careful ¡it is destructive!
+        imap_delete($inbox,$i);
+        $acum_ok++;
+       }
+       
+  //destroy mailBuilder
+  unset($unEmail); 
+} 
+//MAIN: END OF MAIN LOOP
 
-//cerrar conexión imap
+//close IMAP connection
+
 imap_close($inbox,CL_EXPUNGE);
 
-//grabar log
-$output_log=$cola.';'.date("d/m/Y/H:i:s").';'.$num_emails.' '.'correos en la cola'.' '.$cola.';'.$acum.' '.'correos envíados desde'.' '.';'.$acum_error.' '.'correos fallados'.PHP_EOL;
+//RECORD LOG
+//$cola, $output_log, $fichero_log are imported vars
+$output_log=$cola.';'.date("d/m/Y/H:i:s").';'.$num_emails.' '.'queued emails'.' '.$cola.';'.$acum_ok.' '.'emails sent from'.' '.';'.$acum_error.' '.'failed emails'.PHP_EOL;
 echo $output_log;
 $fp = fopen($fichero_log, 'a'); //opens file in append mode
 fwrite($fp, $output_log);
 fclose($fp);
+
 //END OF MAIN Method
 
 ?>
