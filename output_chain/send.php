@@ -72,6 +72,7 @@ function getFilenameFromPart($part) {
         $filename = $object->value;
       }
     }
+    
   }
 
   if (!$filename && $part->ifparameters) {
@@ -84,6 +85,21 @@ function getFilenameFromPart($part) {
   return $filename;
 }
 
+//there are some cases where email body although encoded in base64, contains spaces, EOL and others. ¡Go figure!
+//this funcion receives a base64 and eliminates spaces, EOL and new lines
+//https://stackoverflow.com/questions/3986299/how-to-remove-new-lines-and-returns-from-php-string
+function sanitize_base64($base64_string)
+{
+   $sanitized_string= $base64_string;
+   $sanitized_string = str_replace('/\s+/','',$sanitized_string);
+   $sanitized_string = str_replace('/[\n\r]/','',$sanitized_string);
+   $sanitized_string = str_replace("\r\n",'',$sanitized_string);
+   $sanitized_string = str_replace("\r",'',$sanitized_string);
+   $sanitized_string = str_replace("\n",'',$sanitized_string);
+   return $sanitized_string;
+}
+
+//END OF STATIC METHODS
 
 //CLASSESS 
 
@@ -98,7 +114,6 @@ class mailBuilder {
       //Create a new PHPMailer instance
       $this->mail = new PHPMailer();
       $this->mail->Encoding = 'base64';
-      //echo 'asunto '.$asunto; //debug
       $this->mail->Subject = $asunto;
       $this->cuerpo = $cuerpo . "Sent from: " . $senderaddress;
       //if NOT plain text, convert to HTML, else use plain text ($this->cuerpo)as it is 
@@ -219,10 +234,10 @@ class mailExtractor {
           $this->cuerpo =  imap_fetchbody($connection,$messageNumber,$partNumber);
           //if body is base64, decode source: https://stackoverflow.com/posts/475217/revisions
           //unsafe code: does not check length TODO
-          //base64 bug
-          if (($this->structure->encoding == constant("ENCBASE64")) || (preg_match($regex, $this->cuerpo))) {
-            $this->cuerpo = base64_decode($this->cuerpo);
-          }
+          $sanitized_body = sanitize_base64($this->cuerpo);          
+          if (($this->structure->encoding == constant("ENCBASE64")) || (preg_match($regex,$sanitized_body))) {
+                $this->cuerpo = base64_decode($sanitized_body);
+              }
           $this->cuerpoHtml = $this->cuerpo;
         } else { //I doubt this else shall be executed
           //attach as ICS and mark message as vcalendar and marking message as vcalendar https://github.com/PHPMailer/PHPMailer/issues/175#issuecomment-636504190
@@ -249,10 +264,10 @@ class mailExtractor {
               //use as readable body
               $this->cuerpo = $miBuffer;
               //if body is base64, decode source: https://stackoverflow.com/posts/475217/revisions
-              // unsafe code: does not check length TODO
-              // base64 bug
-              if (($this->structure->encoding == constant("ENCBASE64")) || (preg_match($regex, $this->cuerpo))) {
-                $this->cuerpo = base64_decode($this->cuerpo);
+              // unsafe code: does not check length TODO              
+              $sanitized_body = sanitize_base64($this->cuerpo);                           
+              if (($this->structure->encoding == constant("ENCBASE64")) || (preg_match($regex,$sanitized_body))) {
+                $this->cuerpo = base64_decode($sanitized_body);
               }
               $this->cuerpoHtml = $this->cuerpo;
             } else {
@@ -298,7 +313,6 @@ class mailExtractor {
     //https://www.thewebtaylor.com/articles/php-how-to-strip-all-spaces-and-special-characters-from-string
     //escape string of filename (delete all spaces,etc).
     $filename=preg_replace('/[^a-zA-Z0-9-_\.]/','', $filename);
-    //echo $filename.PHP_EOL; //debug
     if($filename) {
       // it's an attachment
       //echo "it's an attachment ";
@@ -309,6 +323,7 @@ class mailExtractor {
     }
   }
 }//end of class mailExtractor
+//END OF CLASSES
 
 //BEGIN OF MAIN
 //https://github.com/victorcuervo/lineadecodigo_php/blob/master/email/cuerpo-mensaje.php
